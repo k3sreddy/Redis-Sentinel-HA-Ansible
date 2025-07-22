@@ -15,7 +15,8 @@ This Ansible playbook configures Redis Sentinel for high availability on Rocky L
 ## Quick Start
 1. Copy vars.yml.example to vars.yml and configure variables
 2. Update inventory file with your server IPs
-3. Run: `ansible-playbook -i inventory setup-redis-sentinel.yml`
+3. Run: `ansible -i inventory all -m ping`
+4. Run: `ansible-playbook -i inventory setup-redis-sentinel.yml`
 
 ## Configuration Files
 - `inventory`: Ansible inventory with server groups
