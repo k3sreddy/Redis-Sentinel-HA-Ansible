@@ -1,0 +1,215 @@
+---
+- name: Setup Redis Sentinel High Availability Cluster
+  hosts: redis_all
+  become: yes
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Disable SELinux (for simplicity - configure properly in production)
+      selinux:
+        state: disabled
+      notify: reboot server
+
+    - name: Install EPEL repository
+      dnf:
+        name: epel-release
+        state: present
+
+    - name: Install Redis and dependencies
+      dnf:
+        name:
+          - redis
+          - redis-tools
+          - firewalld
+        state: present
+
+    - name: Create Redis directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: redis
+        group: redis
+        mode: '0755'
+      loop:
+        - /var/log/redis
+        - /var/lib/redis
+        - /etc/redis
+
+    - name: Generate Redis configuration from template
+      template:
+        src: redis.conf.j2
+        dest: /etc/redis/redis.conf
+        owner: redis
+        group: redis
+        mode: '0640'
+        backup: yes
+      notify: restart redis
+
+    - name: Generate Sentinel configuration from template
+      template:
+        src: sentinel.conf.j2
+        dest: /etc/redis/sentinel.conf
+        owner: redis
+        group: redis
+        mode: '0640'
+        backup: yes
+      notify: restart redis-sentinel
+
+    - name: Create Redis systemd service file
+      copy:
+        dest: /etc/systemd/system/redis.service
+        content: |
+          [Unit]
+          Description=Redis In-Memory Data Store
+          After=network.target
+
+          [Service]
+          User=redis
+          Group=redis
+          ExecStart=/usr/bin/redis-server /etc/redis/redis.conf
+          ExecStop=/usr/bin/redis-cli shutdown
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: 
+        - daemon reload
+        - restart redis
+
+    - name: Create Redis Sentinel systemd service file
+      copy:
+        dest: /etc/systemd/system/redis-sentinel.service
+        content: |
+          [Unit]
+          Description=Redis Sentinel
+          After=network.target redis.service
+          Requires=redis.service
+
+          [Service]
+          User=redis
+          Group=redis
+          ExecStart=/usr/bin/redis-server /etc/redis/sentinel.conf --sentinel
+          ExecStop=/usr/bin/redis-cli -p {{ sentinel_port }} shutdown
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+      notify:
+        - daemon reload
+        - restart redis-sentinel
+
+    - name: Start and enable firewalld
+      systemd:
+        name: firewalld
+        state: started
+        enabled: yes
+
+    - name: Configure firewall for Redis
+      firewalld:
+        port: "{{ redis_port }}/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: Configure firewall for Redis Sentinel
+      firewalld:
+        port: "{{ sentinel_port }}/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: Start and enable Redis service
+      systemd:
+        name: redis
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Wait for Redis to start
+      wait_for:
+        port: "{{ redis_port }}"
+        host: "{{ ansible_default_ipv4.address }}"
+        delay: 5
+        timeout: 30
+
+  handlers:
+    - name: daemon reload
+      systemd:
+        daemon_reload: yes
+
+    - name: restart redis
+      systemd:
+        name: redis
+        state: restarted
+
+    - name: restart redis-sentinel
+      systemd:
+        name: redis-sentinel
+        state: restarted
+
+    - name: reboot server
+      reboot:
+        reboot_timeout: 300
+
+- name: Configure Redis Master-Slave Replication
+  hosts: redis_slaves
+  become: yes
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Configure slave replication
+      lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: '^#?\s*replicaof'
+        line: "replicaof {{ hostvars[groups['redis_master'][0]]['ansible_default_ipv4']['address'] }} {{ redis_port }}"
+        state: present
+      notify: restart redis
+
+    - name: Configure master authentication for slaves
+      lineinfile:
+        path: /etc/redis/redis.conf  
+        regexp: '^#?\s*masterauth'
+        line: "masterauth {{ redis_password }}"
+        state: present
+      notify: restart redis
+
+  handlers:
+    - name: restart redis
+      systemd:
+        name: redis
+        state: restarted
+
+- name: Start Redis Sentinel on all nodes
+  hosts: redis_all
+  become: yes
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Start and enable Redis Sentinel service
+      systemd:
+        name: redis-sentinel
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Wait for Sentinel to start
+      wait_for:
+        port: "{{ sentinel_port }}"
+        host: "{{ ansible_default_ipv4.address }}"
+        delay: 5
+        timeout: 30
+
+    - name: Display setup completion message
+      debug:
+        msg: |
+          Redis Sentinel High Availability setup completed!
+
+          Master: {{ hostvars[groups['redis_master'][0]]['ansible_default_ipv4']['address'] }}:{{ redis_port }}
+          Slaves: {% for host in groups['redis_slaves'] %}{{ hostvars[host]['ansible_default_ipv4']['address'] }}:{{ redis_port }}{% if not loop.last %}, {% endif %}{% endfor %}
+
+          Sentinel nodes: {% for host in groups['redis_all'] %}{{ hostvars[host]['ansible_default_ipv4']['address'] }}:{{ sentinel_port }}{% if not loop.last %}, {% endif %}{% endfor %}
+
+          Test with: redis-cli -h {{ hostvars[groups['redis_master'][0]]['ansible_default_ipv4']['address'] }} -a {{ redis_password }} ping

@@ -1,0 +1,56 @@
+---
+# Redis Sentinel Configuration Variables
+# Copy this file to vars.yml and customize for your environment
+
+# Redis Configuration
+redis_port: 6379
+redis_password: "abcdefgh12"
+redis_max_memory: "512mb"
+
+# Sentinel Configuration  
+sentinel_port: 26379
+sentinel_master_name: "mymaster"
+sentinel_quorum: 2
+sentinel_down_after_ms: 30000
+sentinel_failover_timeout_ms: 180000
+sentinel_parallel_syncs: 1
+
+# System Configuration
+firewall_enabled: true
+selinux_state: disabled
+
+# Network Settings
+redis_bind_interface: "{{ ansible_default_ipv4.address }}"
+
+# Logging
+redis_log_level: "notice"
+sentinel_log_level: "notice"
+
+# Performance Tuning
+redis_max_clients: 10000
+redis_timeout: 0
+
+# Persistence Settings
+redis_save_intervals:
+  - "900 1"
+  - "300 10" 
+  - "60 10000"
+
+redis_aof_enabled: true
+redis_aof_filename: "appendonly.aof"
+redis_aof_fsync: "everysec"
+
+# Memory Policies
+redis_maxmemory_policy: "allkeys-lru"
+
+# Replication Settings
+redis_repl_diskless_sync: false
+redis_repl_diskless_sync_delay: 5
+
+# Monitoring
+redis_slowlog_log_slower_than: 10000
+redis_slowlog_max_len: 128
+
+# Security
+redis_protected_mode: true
+redis_rename_dangerous_commands: false

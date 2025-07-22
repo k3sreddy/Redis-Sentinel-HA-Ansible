@@ -1,0 +1,14 @@
+[redis_master]
+172.16.90.160 ansible_user=root redis_role=master
+
+[redis_slaves] 
+172.16.90.161 ansible_user=root redis_role=slave
+172.16.90.162 ansible_user=root redis_role=slave
+
+[redis_all:children]
+redis_master
+redis_slaves
+
+[sentinel_nodes:children]
+redis_master
+redis_slaves
